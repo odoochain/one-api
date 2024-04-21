@@ -3,46 +3,39 @@ package logger
 import (
 	"context"
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/songquanpeng/one-api/common/config"
+	"github.com/songquanpeng/one-api/common/helper"
 )
 
 const (
+	loggerDEBUG = "DEBUG"
 	loggerINFO  = "INFO"
 	loggerWarn  = "WARN"
 	loggerError = "ERR"
 )
 
-const maxLogCount = 1000000
-
-var logCount int
-var setupLogLock sync.Mutex
-var setupLogWorking bool
+var setupLogOnce sync.Once
 
 func SetupLogger() {
-	if LogDir != "" {
-		ok := setupLogLock.TryLock()
-		if !ok {
-			log.Println("setup log is already working")
-			return
+	setupLogOnce.Do(func() {
+		if LogDir != "" {
+			logPath := filepath.Join(LogDir, fmt.Sprintf("oneapi-%s.log", time.Now().Format("20060102")))
+			fd, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				log.Fatal("failed to open log file")
+			}
+			gin.DefaultWriter = io.MultiWriter(os.Stdout, fd)
+			gin.DefaultErrorWriter = io.MultiWriter(os.Stderr, fd)
 		}
-		defer func() {
-			setupLogLock.Unlock()
-			setupLogWorking = false
-		}()
-		logPath := filepath.Join(LogDir, fmt.Sprintf("oneapi-%s.log", time.Now().Format("20060102")))
-		fd, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			log.Fatal("failed to open log file")
-		}
-		gin.DefaultWriter = io.MultiWriter(os.Stdout, fd)
-		gin.DefaultErrorWriter = io.MultiWriter(os.Stderr, fd)
-	}
+	})
 }
 
 func SysLog(s string) {
@@ -55,6 +48,12 @@ func SysError(s string) {
 	_, _ = fmt.Fprintf(gin.DefaultErrorWriter, "[SYS] %v | %s \n", t.Format("2006/01/02 - 15:04:05"), s)
 }
 
+func Debug(ctx context.Context, msg string) {
+	if config.DebugEnabled {
+		logHelper(ctx, loggerDEBUG, msg)
+	}
+}
+
 func Info(ctx context.Context, msg string) {
 	logHelper(ctx, loggerINFO, msg)
 }
@@ -65,6 +64,10 @@ func Warn(ctx context.Context, msg string) {
 
 func Error(ctx context.Context, msg string) {
 	logHelper(ctx, loggerError, msg)
+}
+
+func Debugf(ctx context.Context, format string, a ...any) {
+	Debug(ctx, fmt.Sprintf(format, a...))
 }
 
 func Infof(ctx context.Context, format string, a ...any) {
@@ -85,16 +88,12 @@ func logHelper(ctx context.Context, level string, msg string) {
 		writer = gin.DefaultWriter
 	}
 	id := ctx.Value(RequestIdKey)
+	if id == nil {
+		id = helper.GenRequestID()
+	}
 	now := time.Now()
 	_, _ = fmt.Fprintf(writer, "[%s] %v | %s | %s \n", level, now.Format("2006/01/02 - 15:04:05"), id, msg)
-	logCount++ // we don't need accurate count, so no lock here
-	if logCount > maxLogCount && !setupLogWorking {
-		logCount = 0
-		setupLogWorking = true
-		go func() {
-			SetupLogger()
-		}()
-	}
+	SetupLogger()
 }
 
 func FatalLog(v ...any) {
