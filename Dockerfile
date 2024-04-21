@@ -1,4 +1,4 @@
-FROM node:16 as builder
+FROM node:18 as builder
 
 WORKDIR /web
 COPY ./VERSION .
@@ -12,11 +12,15 @@ WORKDIR /web/berry
 RUN npm install
 RUN DISABLE_ESLINT_PLUGIN='true' REACT_APP_VERSION=$(cat VERSION) npm run build
 
-FROM golang AS builder2
+FROM golang:1.20-alpine AS builder2
 
 ENV GO111MODULE=on \
     CGO_ENABLED=1 \
     GOOS=linux
+# Set go proxy to https://goproxy.cn (open for vps in China Mainland)
+RUN go env -w GOPROXY=https://goproxy.cn,direct
+#RUN sed -i 's/https/http/' /etc/apk/repositories
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
 WORKDIR /build
 ADD go.mod go.sum ./
